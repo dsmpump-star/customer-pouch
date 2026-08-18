@@ -626,10 +626,27 @@ function generateReport(){
     <td>${r?`✅ ${r.tid} #${r.batch}<br><small style="color:var(--muted);">${fmtDate(r.date)}</small>`:'<span style="color:var(--red);">🔴 Pending</span>'}</td>
     <td style="font-size:11px;color:var(--muted);">${t.note||'—'}</td></tr>`;
   }).join('');
+  // Customer-wise summary
+  const custMap={};
+  txns.forEach(t=>{
+    if(!custMap[t.customer])custMap[t.customer]={count:0,total:0,credited:0,pending:0};
+    custMap[t.customer].count++;custMap[t.customer].total+=t.amount;
+    if(credited.has(t.id))custMap[t.customer].credited+=t.amount;
+    else custMap[t.customer].pending+=t.amount;
+  });
+  let gCount=0,gTotal=0,gCredited=0,gPending=0;
+  const custRows=Object.keys(custMap).sort().map(c=>{
+    const d=custMap[c];gCount+=d.count;gTotal+=d.total;gCredited+=d.credited;gPending+=d.pending;
+    return`<tr><td>${c}</td><td>${d.count}</td><td style="font-family:monospace;">₹${d.total.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+    <td style="font-family:monospace;color:#10B981;">₹${d.credited.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+    <td style="font-family:monospace;color:#EF4444;">₹${d.pending.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr>`;
+  }).join('');
   const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Customer Pouch Report</title>
   <style>body{font-family:Arial;font-size:12px;padding:20px;}table{width:100%;border-collapse:collapse;}
   th{background:#1A3A5C;color:#fff;padding:8px 10px;text-align:left;font-size:11px;}
   td{padding:8px 10px;border-bottom:1px solid #ddd;}tr:nth-child(even) td{background:#f9f9f9;}
+  tfoot td{background:#1A3A5C!important;color:#fff!important;font-weight:700;}
+  h2,h3{margin-top:0;}h3{font-size:13px;margin:18px 0 8px;}
   .sum{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}.sbox{background:#F0F4F8;border-radius:8px;padding:10px;flex:1;min-width:80px;text-align:center;}
   .sval{font-size:14px;font-weight:700;font-family:monospace;}.slbl{font-size:9px;color:#888;text-transform:uppercase;}
   .btn{background:#6B7280;color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:700;margin-right:8px;}
@@ -637,13 +654,18 @@ function generateReport(){
   <div class="btn-wrap"><button class="btn" onclick="window.close()">← Back</button><button class="btn btn2" onclick="window.print()">🖨 Print</button></div>
   <h2>💼 Customer Pouch — Report (${fmtDate(from)} to ${fmtDate(to)})</h2>
   <div class="sum">
-    <div class="sbox"><div class="sval" style="color:#EF4444;">₹${totalAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}</div><div class="slbl">Total Debit</div></div>
+    <div class="sbox"><div class="sval" style="color:#1A3A5C;">₹${totalAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}</div><div class="slbl">Total Amount</div></div>
     <div class="sbox"><div class="sval" style="color:#10B981;">₹${creditedAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}</div><div class="slbl">Credited</div></div>
     <div class="sbox"><div class="sval" style="color:#EF4444;">₹${pendingAmt.toLocaleString('en-IN',{minimumFractionDigits:2})}</div><div class="slbl">Pending</div></div>
     <div class="sbox"><div class="sval" style="color:#1A3A5C;">${txns.length}</div><div class="slbl">Entries</div></div>
   </div>
   <table><thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Credit Status</th><th>Note</th></tr></thead>
-  <tbody>${rows}</tbody></table></body></html>`;
+  <tbody>${rows}</tbody></table>
+  <h3>👥 Customer-wise Summary</h3>
+  <table><thead><tr><th>Customer</th><th>Entries</th><th>Total</th><th>Credited</th><th>Pending</th></tr></thead>
+  <tbody>${custRows}</tbody>
+  <tfoot><tr><td>TOTAL</td><td>${gCount}</td><td style="font-family:monospace;">₹${gTotal.toLocaleString('en-IN',{minimumFractionDigits:2})}</td><td style="font-family:monospace;">₹${gCredited.toLocaleString('en-IN',{minimumFractionDigits:2})}</td><td style="font-family:monospace;">₹${gPending.toLocaleString('en-IN',{minimumFractionDigits:2})}</td></tr></tfoot></table>
+  </body></html>`;
   const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
   toast('Report opened');
 }
@@ -684,15 +706,34 @@ async function exportExcel(){
     await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});
   }
   const credited=new Map();db.received.forEach(r=>{if(r.txnId)credited.set(r.txnId,r);});
+  const sorted=[...db.transactions].sort((a,b)=>a.date.localeCompare(b.date));
   const rows=[['Date','Customer','Amount (₹)','Status','TID','Batch #','Credit Date','Note']];
-  [...db.transactions].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{
+  sorted.forEach(t=>{
     const r=credited.get(t.id);
-    rows.push([t.date,t.customer,t.amount,r?'Credited':'Pending',r?.tid||'',r?.batch||'',r?.date||'',t.note||'']);
+    rows.push([t.date,t.customer,t.amount,r?'Credited':'Pending',r?.tid||'',r?.batch?Number(r.batch):'',r?.date||'',t.note||'']);
   });
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(rows);
   ws['!cols']=[{wch:12},{wch:20},{wch:14},{wch:10},{wch:14},{wch:10},{wch:12},{wch:20}];
   XLSX.utils.book_append_sheet(wb,ws,'Transactions');
+  // Customer-wise summary sheet
+  const custMap={};
+  sorted.forEach(t=>{
+    if(!custMap[t.customer])custMap[t.customer]={count:0,total:0,credited:0,pending:0};
+    custMap[t.customer].count++;custMap[t.customer].total+=t.amount;
+    if(credited.has(t.id))custMap[t.customer].credited+=t.amount;
+    else custMap[t.customer].pending+=t.amount;
+  });
+  const custRows=[['Customer','Entries','Total (₹)','Credited (₹)','Pending (₹)']];
+  let gCount=0,gTotal=0,gCredited=0,gPending=0;
+  Object.keys(custMap).sort().forEach(c=>{
+    const d=custMap[c];gCount+=d.count;gTotal+=d.total;gCredited+=d.credited;gPending+=d.pending;
+    custRows.push([c,d.count,d.total,d.credited,d.pending]);
+  });
+  custRows.push([]);custRows.push(['TOTAL',gCount,gTotal,gCredited,gPending]);
+  const custWs=XLSX.utils.aoa_to_sheet(custRows);
+  custWs['!cols']=[{wch:24},{wch:10},{wch:14},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,custWs,'Customer Summary');
   XLSX.writeFile(wb,`CustomerPouch_${todayStr()}.xlsx`);
   toast('Excel downloaded ✅');
 }
